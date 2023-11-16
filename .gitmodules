@@ -1,0 +1,3 @@
+[submodule "external/CXXBLAS"]
+	path = external/CXXBLAS
+	url = git@github.com:dzheltkov/CXXBLAS.git

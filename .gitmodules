@@ -1,3 +1,6 @@
 [submodule "external/CXXBLAS"]
 	path = external/CXXBLAS
 	url = git@github.com:dzheltkov/CXXBLAS.git
+[submodule "external/CXXLAPACK"]
+	path = external/CXXLAPACK
+	url = git@github.com:dzheltkov/CXXLAPACK.git

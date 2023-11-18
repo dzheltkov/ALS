@@ -13,8 +13,8 @@ template<class DataType>
 struct ALSParams
 {
     typedef decltype(std::abs(DataType(0.0))) RealType;
-    uint64_t block_size = 16384;
-    uint64_t max_it = std::numeric_limits<uint64_t>::max();
+    uint64_t block_size = 4096;
+    uint64_t max_it = 200;
     RealType rel_tol = 1000.0 * std::numeric_limits<RealType>::epsilon();
     RealType abs_tol = 0.0;
 };

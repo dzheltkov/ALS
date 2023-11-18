@@ -87,7 +87,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         {
             for (uint64_t i = 0; i < JN; i++)
             {
-                B.[i] *= s[i];
+                B[i] *= s[i];
             }
         }
         for (uint64_t i = 0; i < JN; i++)
@@ -105,11 +105,11 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         auto err_squared = BLAS::nrm2(JN, B.data(), 1);
         err_squared = nrm_squared - err_squared * err_squared;
         BLAS::trsv('U', 'N', 'N', JN, H.data(), JN, B.data(), 1);
-        if (equud)
+        if (equed)
         {
             for (uint64_t i = 0; i < JN; i++)
             {
-                B.[i] *= s[i];
+                B[i] *= s[i];
             }
         }
         model.update(d, B.begin());

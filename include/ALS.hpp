@@ -18,7 +18,7 @@ struct ALSParams
     RealType abs_tol = 0.0;
 };
 
-template <class Model, class DataType>
+    template <class Model, class DataType>
 void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = ALSParams<DataType>())
 {
     typedef decltype(std::abs(DataType(0.0))) RealType;
@@ -41,6 +41,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
     std::vector<DataType> J(block_size * max_JN);
     std::vector<DataType> B(max_JN);
     std::vector<DataType> H(max_JN * max_JN);
+    std::vector<RealType> s(max_JN);
 
     auto nrm_squared = BLAS::nrm2(K, rhs, 1);
     nrm_squared *= nrm_squared;
@@ -67,10 +68,35 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
 
             BLAS::gemv('C', JM, JN, DataType(1.0), J.data(), block_size, rhs + k, 1, DataType(1.0), B.data(), 1);
             BLAS::herk('U', 'C', JN, JM, RealType(1.0), J.data(), block_size, RealType(1.0), H.data(), JN);
-       }
+        }
+
+        int info = 0;
+
+        RealType scond, amax;
+
+        info = LAPACK::poequb(JN, H.data(), JN, s.data(), scond, amax);
+
+        bool equed = LAPACK::laqhe('U', JN, H.data(), JN, s.data(), scond, amax);
+
+        RealType alpha = 128 * std::numeric_limits<RealType>::epsilon();
+        if (!equed)
+        {
+            alpha *= amax * scond;
+        }
+        else
+        {
+            for (uint64_t i = 0; i < JN; i++)
+            {
+                B.[i] *= s[i];
+            }
+        }
+        for (uint64_t i = 0; i < JN; i++)
+        {
+            H[i * (JN + 1)] += alpha;
+        }
 
 
-        int info = LAPACK::potrf('U', JN, H.data(), JN);
+        info = LAPACK::potrf('U', JN, H.data(), JN);
         if (info != 0)
         {
             throw std::runtime_error("LAPACK::potrf failed");
@@ -79,6 +105,13 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         auto err_squared = BLAS::nrm2(JN, B.data(), 1);
         err_squared = nrm_squared - err_squared * err_squared;
         BLAS::trsv('U', 'N', 'N', JN, H.data(), JN, B.data(), 1);
+        if (equud)
+        {
+            for (uint64_t i = 0; i < JN; i++)
+            {
+                B.[i] *= s[i];
+            }
+        }
         model.update(d, B.begin());
         model.update_linear(B.begin() + M[d]);
         if (left_to_right)

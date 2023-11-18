@@ -7,6 +7,7 @@
 #include <CXXBLAS.hpp>
 #include <CXXLAPACK.hpp>
 #include <iostream>
+#include <chrono>
 
 template<class DataType>
 struct ALSParams
@@ -51,25 +52,39 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
     bool left_to_right = true;
 
     auto prev_err_squared = nrm_squared;
+    std::chrono::duration<double> jac_gen_time;
+    std::chrono::duration<double> herk_time;
+    std::chrono::duration<double> other_time;
     while (true)
     {
+        auto start_time = std::chrono::steady_clock::now();
         const uint64_t JN = M[d] + L;
-        std::fill(B.begin(), B.begin() + max_JN, DataType(0.0));
-        std::fill(H.begin(), H.begin() + max_JN * max_JN, DataType(0.0));
+        std::fill(B.begin(), B.begin() + JN, DataType(0.0));
+        std::fill(H.begin(), H.begin() + JN * JN, DataType(0.0));
+        auto end_time = std::chrono::steady_clock::now();
+
+        other_time += std::chrono::duration<double>(end_time - start_time);
 
         for (uint64_t k = 0; k < K; k += block_size)
         {
-            std::fill(J.begin(), J.begin() + block_size * max_JN, DataType(0.0));
+            start_time = std::chrono::steady_clock::now();
             uint64_t k_last = std::min(k + block_size, K);
             model.JacobianPart(d, k, k_last, J.begin(), block_size);
             model.LinearPart(k, k_last, J.begin() + block_size * M[d], block_size);
+            end_time = std::chrono::steady_clock::now();
+            jac_gen_time += std::chrono::duration<double>(end_time - start_time);
 
+            start_time = std::chrono::steady_clock::now();
             const uint64_t JM = k_last - k;
 
             BLAS::gemv('C', JM, JN, DataType(1.0), J.data(), block_size, rhs + k, 1, DataType(1.0), B.data(), 1);
             BLAS::herk('U', 'C', JN, JM, RealType(1.0), J.data(), block_size, RealType(1.0), H.data(), JN);
+            end_time = std::chrono::steady_clock::now();
+
+            herk_time += std::chrono::duration<double>(end_time - start_time);
         }
 
+        start_time = std::chrono::steady_clock::now();
         int info = 0;
 
         RealType scond, amax;
@@ -114,6 +129,9 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         }
         model.update(d, B.begin());
         model.update_linear(B.begin() + M[d]);
+        end_time = std::chrono::steady_clock::now();
+
+        other_time += std::chrono::duration<double>(end_time - start_time);
         if (left_to_right)
         {
             d++;
@@ -129,7 +147,8 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
             {
                 left_to_right = true;
                 i++;
-                std::cout << i << ' ' << 10 * (std::log10(err_squared) - std::log10(nrm_squared)) << std::endl;
+                std::cout << i << ' ' << 10 * (std::log10(err_squared) - std::log10(nrm_squared)) << ' ' << (prev_err_squared - err_squared) / nrm_squared 
+                          << ' ' << jac_gen_time.count() << ' ' << herk_time.count() << ' ' << other_time.count() << std::endl;
 
                 if ((prev_err_squared - err_squared) <= std::min(abs_tol, rel_tol * nrm_squared) || i == max_it)
                 {
@@ -139,5 +158,6 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
             }
         }
     }
+    std::cout << 20 * std::log10(model.residual_norm()) - 10  * std::log10(nrm_squared) << std::endl;
 }
 #endif

@@ -42,7 +42,6 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
     std::vector<DataType> J(block_size * max_JN);
     std::vector<DataType> B(max_JN);
     std::vector<DataType> H(max_JN * max_JN);
-    std::vector<RealType> s(max_JN);
     std::vector<DataType> R(K);
 
     auto nrm = BLAS::nrm2(K, rhs, 1);
@@ -91,27 +90,10 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         start_time = std::chrono::steady_clock::now();
         int info = 0;
 
-        RealType scond, amax;
-
-        info = LAPACK::poequb(JN, H.data(), JN, s.data(), scond, amax);
-
-        bool equed = LAPACK::laqhe('U', JN, H.data(), JN, s.data(), scond, amax);
-
         RealType alpha = 1024 * std::numeric_limits<RealType>::epsilon();
-        if (!equed)
-        {
-            alpha *= amax * scond;
-        }
-        else
-        {
-            for (uint64_t i = 0; i < JN; i++)
-            {
-                B[i] *= s[i];
-            }
-        }
         for (uint64_t i = 0; i < JN; i++)
         {
-            H[i * (JN + 1)] += alpha;
+            H[i * (JN + 1)] *= 1 + alpha;
         }
 
 
@@ -121,13 +103,6 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
             throw std::runtime_error("LAPACK::potrf failed");
         }
         LAPACK::potrs('U', JN, 1, H.data(), JN, B.data(), JN);
-        if (equed)
-        {
-            for (uint64_t i = 0; i < JN; i++)
-            {
-                B[i] *= s[i];
-            }
-        }
         model.update(d, B.begin());
         model.update_linear(B.begin() + M[d]);
         end_time = std::chrono::steady_clock::now();

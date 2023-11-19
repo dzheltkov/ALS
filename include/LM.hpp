@@ -40,7 +40,6 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
     std::vector<DataType> J(block_size * sum_M);
     std::vector<DataType> B(sum_M);
     std::vector<DataType> H(sum_M * sum_M);
-    std::vector<RealType> s(sum_M);
     std::vector<DataType> R(K);
 
     auto nrm = BLAS::nrm2(K, rhs, 1);
@@ -97,26 +96,6 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
         start_time = std::chrono::steady_clock::now();
         int info = 0;
 
-        RealType scond, amax;
-
-        info = LAPACK::poequb(sum_M, H.data(), sum_M, s.data(), scond, amax);
-
-        bool equed = false;//LAPACK::laqhe('U', sum_M, H.data(), sum_M, s.data(), scond, amax);
-
-        double lambda_min = std::numeric_limits<RealType>::epsilon();
-        double lambda_max = RealType(1.0) / std::numeric_limits<RealType>::epsilon();
-        if (!equed)
-        {
-            lambda_min *= amax * scond;
-            lambda_max *= amax;
-        }
-        else
-        {
-            for (uint64_t i = 0; i < sum_M; i++)
-            {
-                B[i] *= s[i];
-            }
-        }
 
         std::vector<DataType> Hc(H.size());
         std::vector<DataType> Bc(B.size());
@@ -134,6 +113,8 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
         RealType best_lambda = 0;
         RealType best_alpha = 0;
 
+        double lambda_min = std::numeric_limits<RealType>::epsilon();
+        double lambda_max = 1024 * lambda_min;//RealType(1.0) / std::numeric_limits<RealType>::epsilon();
 
         for (double lambda = lambda_min; lambda <= lambda_max; lambda *= 2)
         {
@@ -142,7 +123,7 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
 
             for (uint64_t i = 0; i < sum_M; i++)
             {
-                Hc[i * (sum_M + 1)] += lambda;
+                Hc[i * (sum_M + 1)] *= 1 + lambda;
             }
 
             info = LAPACK::potrf('U', sum_M, Hc.data(), sum_M);
@@ -151,13 +132,6 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
                 continue;
             }
             LAPACK::potrs('U', sum_M, 1, Hc.data(), sum_M, Bc.data(), sum_M);
-            if (equed)
-            {
-                for (uint64_t i = 0; i < sum_M; i++)
-                {
-                    Bc[i] *= s[i];
-                }
-            }
             BLAS::copy(sum_M, x.data(), 1, new_x.data(), 1);
             BLAS::axpy(sum_M, DataType(1.0), Bc.data(), 1, new_x.data(), 1);
             uint64_t offset = 0;
@@ -172,7 +146,7 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
 
             auto alpha_best_norm = new_residual_norm;
 
-            //std::cout << lambda << ' ' << 1.0 << ' ' << 20 * (std::log10(new_residual_norm) - std::log10(nrm)) << std::endl;
+            std::cout << lambda << ' ' << 1.0 << ' ' << 20 * (std::log10(new_residual_norm) - std::log10(nrm)) << std::endl;
 
             if (new_residual_norm < residual_norm)
             {
@@ -182,7 +156,7 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
                 best_alpha = 1.0;
             }
 
-            RealType alpha = 1;
+            /*RealType alpha = 1;
             while(true)
             {
                 alpha /= 2;
@@ -197,7 +171,7 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
                 model.update_linear(new_x.data() + offset);
 
                 auto new_residual_norm = model.residual_norm();
-                //std::cout << lambda << ' ' << alpha << ' ' << 20 * (std::log10(new_residual_norm) - std::log10(nrm)) << std::endl;
+                std::cout << lambda << ' ' << alpha << ' ' << 20 * (std::log10(new_residual_norm) - std::log10(nrm)) << std::endl;
 
                 if (new_residual_norm < residual_norm)
                 {
@@ -230,7 +204,7 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
                 model.update_linear(new_x.data() + offset);
 
                 auto new_residual_norm = model.residual_norm();
-                //std::cout << lambda << ' ' << alpha << ' ' << 20 * (std::log10(new_residual_norm) - std::log10(nrm)) << std::endl;
+                std::cout << lambda << ' ' << alpha << ' ' << 20 * (std::log10(new_residual_norm) - std::log10(nrm)) << std::endl;
 
                 if (new_residual_norm < residual_norm)
                 {
@@ -247,7 +221,7 @@ void LM(Model &model, const DataType *rhs, const LMParams<DataType> &params = LM
                 {
                     break;
                 }
-            }
+            }*/
         }
         offset = 0;
         for (uint64_t d = 0; d < D; d++)

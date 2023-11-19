@@ -43,15 +43,15 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
     std::vector<DataType> B(max_JN);
     std::vector<DataType> H(max_JN * max_JN);
     std::vector<RealType> s(max_JN);
+    std::vector<DataType> R(K);
 
-    auto nrm_squared = BLAS::nrm2(K, rhs, 1);
-    nrm_squared *= nrm_squared;
+    auto nrm = BLAS::nrm2(K, rhs, 1);
 
     uint64_t d = 0;
     uint64_t i = 0;
     bool left_to_right = true;
 
-    auto prev_err_squared = nrm_squared;
+    auto prev_err = nrm;
     std::chrono::duration<double> jac_gen_time;
     std::chrono::duration<double> herk_time;
     std::chrono::duration<double> other_time;
@@ -61,6 +61,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         const uint64_t JN = M[d] + L;
         std::fill(B.begin(), B.begin() + JN, DataType(0.0));
         std::fill(H.begin(), H.begin() + JN * JN, DataType(0.0));
+        BLAS::copy(K, rhs, 1, R.data(), 1);
         auto end_time = std::chrono::steady_clock::now();
 
         other_time += std::chrono::duration<double>(end_time - start_time);
@@ -77,6 +78,9 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
             start_time = std::chrono::steady_clock::now();
             const uint64_t JM = k_last - k;
 
+
+            BLAS::gemv('N', JM, M[d], DataType(-1.0), J.data(), block_size, model.mode(d), 1, DataType(1.0), R.data() + k, 1);
+            BLAS::gemv('N', JM, L, DataType(-1.0), J.data() + block_size * M[d], block_size, model.linear(), 1, DataType(1.0), R.data() + k, 1);
             BLAS::gemv('C', JM, JN, DataType(1.0), J.data(), block_size, rhs + k, 1, DataType(1.0), B.data(), 1);
             BLAS::herk('U', 'C', JN, JM, RealType(1.0), J.data(), block_size, RealType(1.0), H.data(), JN);
             end_time = std::chrono::steady_clock::now();
@@ -93,7 +97,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
 
         bool equed = LAPACK::laqhe('U', JN, H.data(), JN, s.data(), scond, amax);
 
-        RealType alpha = 128 * std::numeric_limits<RealType>::epsilon();
+        RealType alpha = 1024 * std::numeric_limits<RealType>::epsilon();
         if (!equed)
         {
             alpha *= amax * scond;
@@ -116,10 +120,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         {
             throw std::runtime_error("LAPACK::potrf failed");
         }
-        BLAS::trsv('U', 'C', 'N', JN, H.data(), JN, B.data(), 1);
-        auto err_squared = BLAS::nrm2(JN, B.data(), 1);
-        err_squared = nrm_squared - err_squared * err_squared;
-        BLAS::trsv('U', 'N', 'N', JN, H.data(), JN, B.data(), 1);
+        LAPACK::potrs('U', JN, 1, H.data(), JN, B.data(), JN);
         if (equed)
         {
             for (uint64_t i = 0; i < JN; i++)
@@ -147,17 +148,18 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
             {
                 left_to_right = true;
                 i++;
-                std::cout << i << ' ' << 10 * (std::log10(err_squared) - std::log10(nrm_squared)) << ' ' << (prev_err_squared - err_squared) / nrm_squared 
+                auto err = BLAS::nrm2(K, R.data(), 1);
+                std::cout << i << ' ' << 20 * (std::log10(err) - std::log10(nrm)) << ' ' << (prev_err - err) / nrm
                           << ' ' << jac_gen_time.count() << ' ' << herk_time.count() << ' ' << other_time.count() << std::endl;
 
-                if ((prev_err_squared - err_squared) <= std::min(abs_tol, rel_tol * nrm_squared) || i == max_it)
+                if ((prev_err - err) <= std::max(abs_tol, rel_tol * nrm) || i == max_it)
                 {
                     break;
                 }
-                prev_err_squared = err_squared;
+                prev_err = err;
             }
         }
     }
-    std::cout << 20 * std::log10(model.residual_norm()) - 10  * std::log10(nrm_squared) << std::endl;
+    std::cout << 20 * (std::log10(model.residual_norm()) - std::log10(nrm)) << std::endl;
 }
 #endif

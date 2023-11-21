@@ -8,14 +8,15 @@
 #include <CXXLAPACK.hpp>
 #include <iostream>
 #include <chrono>
+#include <omp.h>
 
 template<class DataType>
 struct ALSParams
 {
     typedef decltype(std::abs(DataType(0.0))) RealType;
-    uint64_t block_size = 4096;
+    uint64_t block_size = 64;
     uint64_t max_it = 200;
-    RealType rel_tol = 1000.0 * std::numeric_limits<RealType>::epsilon();
+    RealType rel_tol = 1024 * std::numeric_limits<RealType>::epsilon();
     RealType abs_tol = 0.0;
 };
 
@@ -39,9 +40,6 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
     const double abs_tol = params.abs_tol;
     uint64_t max_it = params.max_it;
 
-    std::vector<DataType> J(block_size * max_JN);
-    std::vector<DataType> B(max_JN);
-    std::vector<DataType> H(max_JN * max_JN);
     std::vector<DataType> R(K);
 
     auto nrm = BLAS::nrm2(K, rhs, 1);
@@ -52,40 +50,59 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
 
     auto prev_err = nrm;
     std::chrono::duration<double> jac_gen_time;
-    std::chrono::duration<double> herk_time;
     std::chrono::duration<double> other_time;
+    std::vector<std::vector<DataType> > J(omp_get_max_threads(), std::vector<DataType>(block_size * max_JN));
+    std::vector<std::vector<DataType> > H(omp_get_max_threads(), std::vector<DataType>(max_JN * max_JN));
+    std::vector<std::vector<DataType> > B(omp_get_max_threads(), std::vector<DataType>(max_JN));
     while (true)
     {
         auto start_time = std::chrono::steady_clock::now();
         const uint64_t JN = M[d] + L;
-        std::fill(B.begin(), B.begin() + JN, DataType(0.0));
-        std::fill(H.begin(), H.begin() + JN * JN, DataType(0.0));
         BLAS::copy(K, rhs, 1, R.data(), 1);
         auto end_time = std::chrono::steady_clock::now();
 
         other_time += std::chrono::duration<double>(end_time - start_time);
 
-        for (uint64_t k = 0; k < K; k += block_size)
+        start_time = std::chrono::steady_clock::now();
+#pragma omp parallel
         {
-            start_time = std::chrono::steady_clock::now();
-            uint64_t k_last = std::min(k + block_size, K);
-            model.JacobianPart(d, k, k_last, J.begin(), block_size);
-            model.LinearPart(k, k_last, J.begin() + block_size * M[d], block_size);
-            end_time = std::chrono::steady_clock::now();
-            jac_gen_time += std::chrono::duration<double>(end_time - start_time);
+            int t = omp_get_thread_num();
+            std::fill(B[t].begin(), B[t].begin() + JN, DataType(0.0));
+            std::fill(H[t].begin(), H[t].begin() + JN * JN, DataType(0.0));
+#pragma omp for
+            for (uint64_t k = 0; k < K; k += block_size)
+            {
+                uint64_t k_last = std::min(k + block_size, K);
+                model.JacobianPart(d, k, k_last, J[t].begin(), block_size);
+                model.LinearPart(k, k_last, J[t].begin() + block_size * M[d], block_size);
 
-            start_time = std::chrono::steady_clock::now();
-            const uint64_t JM = k_last - k;
+                const uint64_t JM = k_last - k;
 
 
-            BLAS::gemv('N', JM, M[d], DataType(-1.0), J.data(), block_size, model.mode(d), 1, DataType(1.0), R.data() + k, 1);
-            BLAS::gemv('N', JM, L, DataType(-1.0), J.data() + block_size * M[d], block_size, model.linear(), 1, DataType(1.0), R.data() + k, 1);
-            BLAS::gemv('C', JM, JN, DataType(1.0), J.data(), block_size, rhs + k, 1, DataType(1.0), B.data(), 1);
-            BLAS::herk('U', 'C', JN, JM, RealType(1.0), J.data(), block_size, RealType(1.0), H.data(), JN);
-            end_time = std::chrono::steady_clock::now();
-
-            herk_time += std::chrono::duration<double>(end_time - start_time);
+                BLAS::gemv('N', JM, M[d], DataType(-1.0), J[t].data(), block_size, model.mode(d), 1, DataType(1.0), R.data() + k, 1);
+                BLAS::gemv('N', JM, L, DataType(-1.0), J[t].data() + block_size * M[d], block_size, model.linear(), 1, DataType(1.0), R.data() + k, 1);
+                BLAS::gemv('C', JM, JN, DataType(1.0), J[t].data(), block_size, rhs + k, 1, DataType(1.0), B[t].data(), 1);
+                BLAS::herk('U', 'C', JN, JM, RealType(1.0), J[t].data(), block_size, RealType(1.0), H[t].data(), JN);
+            }
+#pragma omp for nowait
+            for (int64_t j = 0; j < JN * JN; j++)
+            {
+                for (int64_t l = 1; l < omp_get_num_threads(); l++)
+                {
+                    H[0][j] += H[l][j];
+                }
+            }
+#pragma omp for nowait
+            for (int64_t j = 0; j < JN; j++)
+            {
+                for (int64_t l = 1; l < omp_get_num_threads(); l++)
+                {
+                    B[0][j] += B[l][j];
+                }
+            }
         }
+        end_time = std::chrono::steady_clock::now();
+        jac_gen_time += std::chrono::duration<double>(end_time - start_time);
 
         start_time = std::chrono::steady_clock::now();
         int info = 0;
@@ -93,18 +110,18 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         RealType alpha = 1024 * std::numeric_limits<RealType>::epsilon();
         for (uint64_t i = 0; i < JN; i++)
         {
-            H[i * (JN + 1)] *= 1 + alpha;
+            H[0][i * (JN + 1)] *= 1 + alpha;
         }
 
 
-        info = LAPACK::potrf('U', JN, H.data(), JN);
+        info = LAPACK::potrf('U', JN, H[0].data(), JN);
         if (info != 0)
         {
             throw std::runtime_error("LAPACK::potrf failed");
         }
-        LAPACK::potrs('U', JN, 1, H.data(), JN, B.data(), JN);
-        model.update(d, B.begin());
-        model.update_linear(B.begin() + M[d]);
+        LAPACK::potrs('U', JN, 1, H[0].data(), JN, B[0].data(), JN);
+        model.update(d, B[0].begin());
+        model.update_linear(B[0].begin() + M[d]);
         end_time = std::chrono::steady_clock::now();
 
         other_time += std::chrono::duration<double>(end_time - start_time);
@@ -125,7 +142,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
                 i++;
                 auto err = BLAS::nrm2(K, R.data(), 1);
                 std::cout << i << ' ' << 20 * (std::log10(err) - std::log10(nrm)) << ' ' << (prev_err - err) / nrm
-                          << ' ' << jac_gen_time.count() << ' ' << herk_time.count() << ' ' << other_time.count() << std::endl;
+                          << ' ' << jac_gen_time.count() << ' ' << other_time.count() << std::endl;
 
                 if ((prev_err - err) <= std::max(abs_tol, rel_tol * nrm) || i == max_it)
                 {
@@ -135,6 +152,5 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
             }
         }
     }
-    std::cout << 20 * (std::log10(model.residual_norm()) - std::log10(nrm)) << std::endl;
 }
 #endif

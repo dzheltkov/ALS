@@ -85,7 +85,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
                 BLAS::herk('U', 'C', JN, JM, RealType(1.0), J[t].data(), block_size, RealType(1.0), H[t].data(), JN);
             }
 #pragma omp for nowait
-            for (int64_t j = 0; j < JN * JN; j++)
+            for (uint64_t j = 0; j < JN * JN; j++)
             {
                 for (int64_t l = 1; l < omp_get_num_threads(); l++)
                 {
@@ -93,7 +93,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
                 }
             }
 #pragma omp for nowait
-            for (int64_t j = 0; j < JN; j++)
+            for (uint64_t j = 0; j < JN; j++)
             {
                 for (int64_t l = 1; l < omp_get_num_threads(); l++)
                 {

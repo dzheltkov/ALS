@@ -9,6 +9,7 @@
 #include <iostream>
 #include <chrono>
 #include <omp.h>
+#include <functional>
 
 template<class DataType>
 struct ALSParams
@@ -18,6 +19,7 @@ struct ALSParams
     uint64_t max_it = 200;
     RealType rel_tol = 1024 * std::numeric_limits<RealType>::epsilon();
     RealType abs_tol = 0.0;
+    std::function<RealType (int64_t, const DataType *, const DataType *)> additional_metric = nullptr;
 };
 
     template <class Model, class DataType>
@@ -58,7 +60,6 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
     {
         auto start_time = std::chrono::steady_clock::now();
         const uint64_t JN = M[d] + L;
-        BLAS::copy(K, rhs, 1, R.data(), 1);
         auto end_time = std::chrono::steady_clock::now();
 
         other_time += std::chrono::duration<double>(end_time - start_time);
@@ -79,8 +80,8 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
                 const uint64_t JM = k_last - k;
 
 
-                BLAS::gemv('N', JM, M[d], DataType(-1.0), J[t].data(), block_size, model.mode(d), 1, DataType(1.0), R.data() + k, 1);
-                BLAS::gemv('N', JM, L, DataType(-1.0), J[t].data() + block_size * M[d], block_size, model.linear(), 1, DataType(1.0), R.data() + k, 1);
+                BLAS::gemv('N', JM, M[d], DataType(1.0), J[t].data(), block_size, model.mode(d), 1, DataType(0.0), R.data() + k, 1);
+                BLAS::gemv('N', JM, L, DataType(1.0), J[t].data() + block_size * M[d], block_size, model.linear(), 1, DataType(1.0), R.data() + k, 1);
                 BLAS::gemv('C', JM, JN, DataType(1.0), J[t].data(), block_size, rhs + k, 1, DataType(1.0), B[t].data(), 1);
                 BLAS::herk('U', 'C', JN, JM, RealType(1.0), J[t].data(), block_size, RealType(1.0), H[t].data(), JN);
             }
@@ -140,8 +141,19 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
             {
                 left_to_right = true;
                 i++;
+                RealType add_err = 0;
+                if (params.additional_metric)
+                {
+                    add_err = params.additional_metric(K, rhs, R.data());
+                }
+                BLAS::axpy(K, DataType(-1.0), rhs, 1, R.data(), 1);
                 auto err = BLAS::nrm2(K, R.data(), 1);
-                std::cout << i << ' ' << 20 * (std::log10(err) - std::log10(nrm)) << ' ' << (prev_err - err) / nrm
+                std::cout << i << ' ' << 20 * (std::log10(err) - std::log10(nrm)) << ' ';
+                if (params.additional_metric)
+                {
+                    std::cout << add_err << ' ';
+                }
+                std::cout << (prev_err - err) / nrm
                           << ' ' << jac_gen_time.count() << ' ' << other_time.count() << std::endl;
 
                 if ((prev_err - err) <= std::max(abs_tol, rel_tol * nrm) || i == max_it)

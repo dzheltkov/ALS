@@ -139,6 +139,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
             d--;
             if (d == 0)
             {
+                start_time = std::chrono::steady_clock::now();
                 left_to_right = true;
                 i++;
                 RealType add_err = 0;
@@ -148,6 +149,9 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
                 }
                 BLAS::axpy(K, DataType(-1.0), rhs, 1, R.data(), 1);
                 auto err = BLAS::nrm2(K, R.data(), 1);
+                end_time = std::chrono::steady_clock::now();
+
+                other_time += std::chrono::duration<double>(end_time - start_time);
                 std::cout << i << ' ' << 20 * (std::log10(err) - std::log10(nrm)) << ' ';
                 if (params.additional_metric)
                 {

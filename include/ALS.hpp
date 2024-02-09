@@ -16,7 +16,7 @@ struct ALSParams
 {
     typedef decltype(std::abs(DataType(0.0))) RealType;
     uint64_t block_size = 64;
-    uint64_t max_it = 400;
+    uint64_t max_it = 100;
     RealType rel_tol = 1024 * std::numeric_limits<RealType>::epsilon();
     RealType abs_tol = 0.0;
     std::function<RealType (int64_t, const DataType *, const DataType *)> additional_metric = nullptr;
@@ -163,7 +163,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         LAPACK::potrs('U', JN, 1, H[0].data(), JN, B[0].data(), JN);
 
         // here solution is obtained
-        model.update(d, B[0].begin());
+        model.update_new(d, B[0].begin());
         model.update_linear(B[0].begin() + M[d]);
         end_time = std::chrono::steady_clock::now();
 
@@ -203,7 +203,11 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
                 std::cout << (prev_err - err) / nrm
                           << ' ' << jac_gen_time.count() << ' ' << other_time.count() << std::endl;
 
-                if ((prev_err - err) <= std::max(abs_tol, rel_tol * nrm) || i == max_it)
+                // if ((prev_err - err) <= std::max(abs_tol, rel_tol * nrm) || i == max_it)
+                // {
+                //     break;
+                // }
+                if (std::abs(prev_err - err) <= std::max(abs_tol, rel_tol * nrm) || i == max_it)
                 {
                     break;
                 }

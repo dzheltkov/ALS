@@ -163,7 +163,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         LAPACK::potrs('U', JN, 1, H[0].data(), JN, B[0].data(), JN);
 
         // here solution is obtained
-        model.update_new(d, B[0].begin());
+        model.update(d, B[0].begin());
         model.update_linear(B[0].begin() + M[d]);
         end_time = std::chrono::steady_clock::now();
 

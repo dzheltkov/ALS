@@ -9,6 +9,7 @@
 #include <iostream>
 #include <chrono>
 #include <omp.h>
+#include <iomanip>
 #include <functional>
 
 template<class DataType>
@@ -24,9 +25,11 @@ struct ALSParams
 };
 
     template <class Model, class DataType>
-void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = ALSParams<DataType>())
+void ALS(Model &model, const ALSParams<DataType> &params = ALSParams<DataType>())
 {
     typedef decltype(std::abs(DataType(0.0))) RealType;
+
+    const DataType *rhs;
     const uint64_t D = model.dimensionality();
     const auto M = model.sizes();
     const uint64_t L = model.linear_size();
@@ -45,11 +48,12 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
 
     std::vector<DataType> R(K);
 
-    auto nrm = BLAS::nrm2(K, rhs, 1);
-
     uint64_t d = 0;
     uint64_t i = 0;
     bool left_to_right = true;
+
+    rhs = model.rhs(d);
+    auto nrm = BLAS::nrm2(K, rhs, 1);
 
     auto prev_err = nrm;
     std::chrono::duration<double> jac_gen_time;
@@ -59,6 +63,8 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
     std::vector<std::vector<DataType> > B(omp_get_max_threads(), std::vector<DataType>(max_JN));
     while (true)
     {
+        rhs = model.rhs(d);
+        //std::cout <<"start d:" << d << " " << rhs[0] << " " << rhs[1] << " " << rhs[2] << std::endl;
         auto start_time = std::chrono::steady_clock::now();
         const uint64_t JN = M[d] + L;
         auto end_time = std::chrono::steady_clock::now();
@@ -125,8 +131,7 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
         end_time = std::chrono::steady_clock::now();
 
         other_time += std::chrono::duration<double>(end_time - start_time);
-
-        //std::cout << d << " " << 20 * (std::log10(model.residual_norm()) - std::log10(nrm)) << std::endl;
+        //std::cout << std::setprecision(10) << " " << d << " residual_error: " << 20 * (std::log10(model.residual_norm()) - std::log10(nrm)) << std::endl;
 
         if (left_to_right)
         {
@@ -145,18 +150,17 @@ void ALS(Model &model, const DataType *rhs, const ALSParams<DataType> &params = 
                 left_to_right = true;
                 i++;
                 std::complex<double> add_err = 0;
-                std::fflush(stdout);
                 if (params.additional_metric)
                 {
                     add_err = params.additional_metric(model.length(), reinterpret_cast<const std::complex<double>*>(rhs), reinterpret_cast<std::complex<double>*>(R.data()));
                 }
-                std::fflush(stdout);
+                //std::cout <<"end d:" << d << " " << rhs[0] << " " << rhs[1] << " " << rhs[2] << std::endl;
                 BLAS::axpy(K, DataType(-1.0), rhs, 1, R.data(), 1);
                 auto err = BLAS::nrm2(K, R.data(), 1);
                 end_time = std::chrono::steady_clock::now();
 
                 other_time += std::chrono::duration<double>(end_time - start_time);
-                std::cout << i << ' ' << 20 * (std::log10(err) - std::log10(nrm)) << ' ';
+                std::cout << std::setprecision(7) << i << ' ' << 20 * (std::log10(err) - std::log10(nrm)) << ' ';
                 if (params.additional_metric)
                 {
                     std::cout << add_err.real() << ' ';
